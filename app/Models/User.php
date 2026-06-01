@@ -116,8 +116,8 @@ class User extends Authenticatable implements JWTSubject
     public function availableProductReviews(): HasMany
     {
         return $this->hasMany(OrderProduct::class)
-            //구매확정
-            ->where('status', OrderStatus::PURCHASE_CONFIRM)
+            //배송완료 또는 구매확정 (배송완료 후에도 리뷰 작성 가능하게)
+            ->whereIn('status', [OrderStatus::DELIVERY_COMPLETE, OrderStatus::PURCHASE_CONFIRM])
             //구매후 30일 이내
             ->where('created_at', '>=', now()->subDays(ProductReview::AVAILABLE_DAYS))
             ->doesntHave('review');
