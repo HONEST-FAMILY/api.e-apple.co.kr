@@ -83,7 +83,7 @@ class OrderController extends ApiController
 
         $order = DB::transaction(function () use ($data) {
             $order = tap(new Order($data))->save();
-            $order->orderProducts()->createMany($data['order_products']);
+            $order->orderProducts()->createMany(Order::splitOrderProductsByQuantity($data['order_products']));
             return $order;
         });
 
@@ -103,7 +103,7 @@ class OrderController extends ApiController
 
         $order = DB::transaction(function () use ($data) {
             $order = tap(new Order($data))->save();
-            $order->orderProducts()->createMany($data['order_products']);
+            $order->orderProducts()->createMany(Order::splitOrderProductsByQuantity($data['order_products']));
             return $order;
         });
 

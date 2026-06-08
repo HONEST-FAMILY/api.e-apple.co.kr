@@ -20,6 +20,7 @@ class Order extends Model
 
     protected $casts = [
         'status' => OrderStatus::class, // Enum 캐스팅
+        'is_test' => 'boolean',
     ];
 
     public function scopeSearch(Builder $query, $filters): Builder
@@ -70,6 +71,22 @@ class Order extends Model
             'quantity' => $orderProduct[5], 'price' => $orderProduct[6],
             'original_price' => $orderProduct[7],
         ];
+    }
+
+    /**
+     * 수량만큼 주문상품을 1개씩 개별 레코드로 분리 (각 quantity=1)
+     * 출고를 개수별로 관리하기 위함. 재고/금액 검증(checkOrderProducts) 통과 후 저장 직전에만 호출할 것
+     */
+    public static function splitOrderProductsByQuantity(array $orderProducts): array
+    {
+        $split = [];
+        foreach ($orderProducts as $orderProduct) {
+            $quantity = (int)($orderProduct['quantity'] ?? 1);
+            for ($i = 0; $i < max(1, $quantity); $i++) {
+                $split[] = array_merge($orderProduct, ['quantity' => 1]);
+            }
+        }
+        return $split;
     }
 
     public function product(): BelongsTo
