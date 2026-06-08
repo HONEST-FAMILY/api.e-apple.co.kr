@@ -106,6 +106,7 @@ Route::group(['prefix' => 'admin'], function () {
                 Route::get('{order}', 'show');
                 Route::put('{order}', 'update');
                 Route::put('{order}/cancel', 'cancel');
+                Route::put('{order}/test', 'toggleTest');
                 Route::post('bulk-prepare-delivery', 'bulkPrepareDelivery');
             });
 

@@ -23,6 +23,7 @@ class OrderResource extends JsonResource
             'can_cancel' => in_array($this->status, OrderStatus::ADMIN_CAN_ORDER_CANCELS)
                 && $this->orderProducts->every(fn($e) => in_array($e->status, OrderStatus::ADMIN_CAN_ORDER_CANCELS)),
             'can_delivery_preparing' => $this->status === OrderStatus::PAYMENT_COMPLETE,
+            'is_test' => (bool)$this->is_test,
         ] : [];
         $return = [
             ...$additionalFields,

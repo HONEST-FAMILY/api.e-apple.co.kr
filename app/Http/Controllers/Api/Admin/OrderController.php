@@ -104,16 +104,35 @@ class OrderController extends ApiController
     public function index(Request $request)
     {
         $filters = $request->input('search');
+
+        //테스트 주문 보기 토글: 기본은 테스트 주문 숨김
+        $showTest = false;
+        if ($filters) {
+            $decoded = json_decode($filters);
+            $showTest = !empty($decoded->show_test);
+        }
+
         $items = Order::with(['user', 'orderProducts.productOption'])
             //->where('status', '!=', OrderStatus::ORDER_PENDING->value)
             ->whereNotIn('status', [
                 OrderStatus::ORDER_PENDING->value,
                 OrderStatus::ORDER_COMPLETE->value
             ])
+            ->when(!$showTest, fn($q) => $q->where('is_test', false))
             ->search($filters)
             ->latest()
             ->paginate($request->get('itemsPerPage', 10));
         return OrderResource::collection($items);
+    }
+
+    /**
+     * 테스트 주문 지정/해제 (관리자 수동 마킹)
+     */
+    public function toggleTest(Request $request, Order $order)
+    {
+        $data = $request->validate(['is_test' => ['required', 'boolean']]);
+        $order->update(['is_test' => $data['is_test']]);
+        return $this->respondSuccessfully(OrderResource::make($order));
     }
 
     public function show(Order $order)
