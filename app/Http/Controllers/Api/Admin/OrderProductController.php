@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\Admin;
 
 use App\Enums\DeliveryCompany;
+use App\Enums\ExchangeReturnStatus;
 use App\Enums\OrderStatus;
 use App\Exports\OrderProductInvoiceTemplateExport;
 use App\Exports\OrderProductsExport;
@@ -10,6 +11,7 @@ use App\Http\Controllers\Api\ApiController;
 use App\Http\Requests\OrderProductRequest;
 use App\Http\Resources\OrderProductResource;
 use App\Imports\OrderProductInvoicesImport;
+use App\Models\ExchangeReturn;
 use App\Models\Order;
 use App\Models\OrderProduct;
 use App\Models\SMS;
@@ -81,6 +83,47 @@ class OrderProductController extends ApiController
         }
 
         return $orderProduct;
+    }
+
+    /**
+     * 일괄 반품접수: 선택한 출고(배송중)에 반품 요청을 등록 (고객 접수와 동일 단위, 환불 처리는 교환/반품관리에서 진행)
+     */
+    public function bulkReturn(Request $request)
+    {
+        $request->validate([
+            'ids' => 'required|array|min:1',
+            'ids.*' => 'required|integer|exists:order_products,id',
+            'problem' => 'required|string',
+            'description' => 'required|string|max:1000',
+        ]);
+
+        $orderProducts = OrderProduct::with('order')->whereIn('id', $request->input('ids'))->get();
+
+        $requested = 0;
+        $skipped = 0;
+
+        DB::transaction(function () use ($orderProducts, $request, &$requested, &$skipped) {
+            foreach ($orderProducts as $orderProduct) {
+                //고객 접수와 동일하게 배송중만 가능, 비회원 주문은 회원 연결이 없어 제외
+                if ($orderProduct->status !== OrderStatus::DELIVERY || !$orderProduct->order?->user_id) {
+                    $skipped++;
+                    continue;
+                }
+
+                $orderProduct->exchangeReturns()->create([
+                    'user_id' => $orderProduct->order->user_id,
+                    'order_id' => $orderProduct->order_id,
+                    'type' => ExchangeReturn::TYPE_RETURN,
+                    'problem' => $request->input('problem'),
+                    'description' => $request->input('description'),
+                    'status' => ExchangeReturnStatus::RECEIVED->value,
+                ]);
+                $orderProduct->update(['status' => OrderStatus::RETURN_REQUESTED]);
+                $requested++;
+            }
+        });
+
+        return $this->respondSuccessfully(['requested' => $requested, 'skipped' => $skipped]);
     }
 
     /**

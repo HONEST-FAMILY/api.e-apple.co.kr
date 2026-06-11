@@ -124,6 +124,7 @@ Route::group(['prefix' => 'admin'], function () {
                 Route::get('export', 'export');
                 Route::get('import-template', 'importTemplate');
                 Route::post('import-invoices', 'importInvoices');
+                Route::post('bulk-return', 'bulkReturn');
                 Route::put('{id?}', 'update');
                 Route::put('{id}/cancel', 'cancel');
                 Route::put('{id}/delivery-info', 'updateDeliveryInfo');
