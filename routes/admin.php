@@ -106,8 +106,10 @@ Route::group(['prefix' => 'admin'], function () {
         Route::group(['prefix' => 'orders', 'controller' => OrderController::class],
             function () {
                 Route::get('', 'index');
+                Route::get('status-counts', 'statusCounts');
                 Route::put('bulk-confirm', 'bulkConfirm');
                 Route::put('bulk-cancel', 'bulkCancel');
+                Route::post('bulk-sms', 'bulkSms');
                 Route::get('{order}', 'show');
                 Route::put('{order}', 'update');
                 Route::put('{order}/cancel', 'cancel');

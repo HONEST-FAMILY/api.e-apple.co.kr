@@ -103,6 +103,29 @@ class OrderController extends ApiController
         $method->invoke($orderProductController, $orderProduct);
     }
 
+    /**
+     * 상태 탭별 건수
+     */
+    public function statusCounts(Request $request)
+    {
+        $showTest = filter_var($request->input('show_test'), FILTER_VALIDATE_BOOLEAN);
+
+        $base = fn() => Order::whereNotIn('status', [
+            OrderStatus::ORDER_PENDING->value,
+            OrderStatus::ORDER_COMPLETE->value
+        ])->when(!$showTest, fn($q) => $q->where('is_test', false));
+
+        return $this->respondSuccessfully([
+            'all' => $base()->count(),
+            'payment_complete' => $base()->where('status', OrderStatus::PAYMENT_COMPLETE)->count(),
+            'delivery_preparing' => $base()->where('status', OrderStatus::DELIVERY_PREPARING)->count(),
+            'delivery' => $base()->where('status', OrderStatus::DELIVERY)->count(),
+            'delivery_complete' => $base()->where('status', OrderStatus::DELIVERY_COMPLETE)->count(),
+            'purchase_confirm' => $base()->where('status', OrderStatus::PURCHASE_CONFIRM)->count(),
+            'cancel' => $base()->whereIn('status', [OrderStatus::CANCELLATION_REQUESTED, OrderStatus::CANCELLATION_COMPLETE])->count(),
+        ]);
+    }
+
     public function index(Request $request)
     {
         $filters = $request->input('search');
@@ -229,8 +252,9 @@ class OrderController extends ApiController
 
         $updated = 0;
         $skipped = 0;
+        $confirmedOrders = [];
 
-        DB::transaction(function () use ($orders, &$updated, &$skipped) {
+        DB::transaction(function () use ($orders, &$updated, &$skipped, &$confirmedOrders) {
             foreach ($orders as $order) {
                 if ($order->status !== OrderStatus::PAYMENT_COMPLETE) {
                     $skipped++;
@@ -241,11 +265,93 @@ class OrderController extends ApiController
                     ->where('status', OrderStatus::PAYMENT_COMPLETE)
                     ->update(['status' => OrderStatus::DELIVERY_PREPARING]);
                 $order->update(['status' => OrderStatus::DELIVERY_PREPARING]);
+                $confirmedOrders[] = $order;
                 $updated++;
             }
         });
 
+        foreach ($confirmedOrders as $order) {
+            $this->sendConfirmNotification($order);
+        }
+
         return $this->respondSuccessfully(['updated' => $updated, 'skipped' => $skipped]);
+    }
+
+    /**
+     * 선택 주문 고객에게 상황전달 SMS 일괄 발송
+     */
+    public function bulkSms(Request $request)
+    {
+        $request->validate([
+            'ids' => 'required|array|min:1',
+            'ids.*' => 'required|integer|exists:orders,id',
+            'message' => 'required|string|max:1000',
+        ]);
+
+        $orders = Order::whereIn('id', $request->input('ids'))->get();
+
+        $sent = 0;
+        $failed = [];
+        $sentPhones = [];
+
+        foreach ($orders as $order) {
+            $phone = $order->buyer_contact ?? $order->user?->phone;
+            if (!$phone) {
+                $failed[] = ['id' => $order->id, 'message' => '연락처가 없습니다.'];
+                continue;
+            }
+            //같은 연락처 중복 발송 방지
+            if (in_array($phone, $sentPhones)) {
+                continue;
+            }
+
+            try {
+                $sms = new SMS();
+                $sms->send($phone, '열매나무 안내', "[열매나무] " . $request->input('message'));
+                $sentPhones[] = $phone;
+                $sent++;
+            } catch (\Exception $e) {
+                $failed[] = ['id' => $order->id, 'message' => 'SMS 발송에 실패했습니다.'];
+                \Log::error('상황전달 SMS 발송 실패', [
+                    'order_id' => $order->id,
+                    'error' => $e->getMessage()
+                ]);
+            }
+        }
+
+        return $this->respondSuccessfully(['sent' => $sent, 'failed' => $failed]);
+    }
+
+    /**
+     * 발주확인 안내 SMS 발송
+     */
+    private function sendConfirmNotification(Order $order)
+    {
+        try {
+            $phone = $order->buyer_contact ?? $order->user?->phone;
+            if (!$phone) {
+                return;
+            }
+
+            $message = "[열매나무] 주문 확인 안내\n";
+            $message .= "주문번호: {$order->merchant_uid}\n";
+            $message .= "주문이 확인되어 상품 준비를 시작했습니다.";
+
+            $sms = new SMS();
+            $result = $sms->send($phone, '열매나무 주문 확인 안내', $message);
+
+            \Log::info('발주확인 SMS 발송 결과', [
+                'order_id' => $order->id,
+                'phone' => $phone,
+                'result' => $result instanceof \Illuminate\Http\JsonResponse ? $result->getData() : $result
+            ]);
+        } catch (\Exception $e) {
+            // SMS 발송 실패 시 로그 기록 (비즈니스 로직은 계속 진행)
+            \Log::error('발주확인 SMS 발송 실패', [
+                'order_id' => $order->id,
+                'error' => $e->getMessage()
+            ]);
+        }
     }
 
     /**
