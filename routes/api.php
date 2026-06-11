@@ -204,6 +204,12 @@ Route::group(['prefix' => 'points', 'middleware' => ['auth:api'], 'controller' =
         Route::get('', 'index');
     });
 
+//당도
+Route::group(['prefix' => 'sweetnesses', 'controller' => \App\Http\Controllers\Api\SweetnessController::class],
+    function () {
+        Route::get('', 'index');
+    });
+
 //상품 카테고리
 Route::group(['prefix' => 'categories', 'controller' => CodeController::class],
     function () {

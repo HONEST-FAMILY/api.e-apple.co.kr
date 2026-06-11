@@ -2,11 +2,13 @@
 
 namespace App\Http\Controllers\Api\Admin;
 
+use App\Enums\OrderStatus;
 use App\Enums\ProductCategory;
 use App\Http\Controllers\Api\ApiController;
 use App\Http\Requests\ProductRequest;
 use App\Http\Resources\ProductResource;
 use App\Models\Code;
+use App\Models\OrderProduct;
 use App\Models\Product;
 use App\Models\ProductOption;
 use Illuminate\Http\Request;
@@ -120,6 +122,66 @@ class ProductController extends ApiController
         $product->delete();
         $product->clearMediaCollection(Product::IMAGES);
         return $this->respondSuccessfully();
+    }
+
+    /**
+     * 상품별 판매 집계 (상품+옵션 단위, 취소/환불/결제실패 제외)
+     */
+    public function sales(Request $request)
+    {
+        $request->validate([
+            'start' => ['required', 'date_format:Y-m-d'],
+            'end' => ['required', 'date_format:Y-m-d'],
+            'keyword' => ['nullable', 'string'],
+        ]);
+
+        $validStatuses = [
+            OrderStatus::PAYMENT_COMPLETE->value,
+            OrderStatus::DELIVERY_PREPARING->value,
+            OrderStatus::DELIVERY->value,
+            OrderStatus::DELIVERY_COMPLETE->value,
+            OrderStatus::PURCHASE_CONFIRM->value,
+        ];
+
+        $query = OrderProduct::query()
+            ->join('orders', 'order_products.order_id', '=', 'orders.id')
+            ->leftJoin('products', 'order_products.product_id', '=', 'products.id')
+            ->leftJoin('product_options', 'order_products.product_option_id', '=', 'product_options.id')
+            ->whereNull('orders.deleted_at')
+            ->where('orders.is_test', false)
+            ->whereIn('order_products.status', $validStatuses)
+            ->whereBetween('orders.created_at', [$request->start . ' 00:00:00', $request->end . ' 23:59:59'])
+            ->when($request->filled('keyword'), function ($query) use ($request) {
+                $query->where('products.name', 'like', '%' . $request->keyword . '%');
+            });
+
+        $rows = (clone $query)
+            ->selectRaw('order_products.product_id,'
+                . ' products.name as product_name,'
+                . ' product_options.name as option_name,'
+                . ' SUM(order_products.quantity) as quantity,'
+                . ' SUM(order_products.price * order_products.quantity) as amount,'
+                . ' COUNT(DISTINCT order_products.order_id) as orders_count')
+            ->groupBy('order_products.product_id', 'order_products.product_option_id', 'products.name', 'product_options.name')
+            ->orderByDesc('amount')
+            ->get()
+            ->map(fn($row) => [
+                'product_id' => $row->product_id,
+                'product_name' => $row->product_name,
+                'option_name' => $row->option_name,
+                'quantity' => (int)$row->quantity,
+                'amount' => (int)$row->amount,
+                'orders_count' => (int)$row->orders_count,
+            ])
+            ->values();
+
+        $totals = [
+            'quantity' => $rows->sum('quantity'),
+            'amount' => $rows->sum('amount'),
+            'orders_count' => (clone $query)->distinct()->count('order_products.order_id'),
+        ];
+
+        return $this->respondSuccessfully(['data' => $rows, 'totals' => $totals]);
     }
 
     public function destroyImage(Media $media)

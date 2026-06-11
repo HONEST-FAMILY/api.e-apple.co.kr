@@ -4,13 +4,16 @@ namespace App\Http\Controllers\Api\Admin;
 
 use App\Enums\DeliveryCompany;
 use App\Enums\OrderStatus;
+use App\Exports\OrderProductInvoiceTemplateExport;
 use App\Exports\OrderProductsExport;
 use App\Http\Controllers\Api\ApiController;
 use App\Http\Requests\OrderProductRequest;
 use App\Http\Resources\OrderProductResource;
+use App\Imports\OrderProductInvoicesImport;
 use App\Models\Order;
 use App\Models\OrderProduct;
 use App\Models\SMS;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Maatwebsite\Excel\Facades\Excel;
@@ -36,18 +39,12 @@ class OrderProductController extends ApiController
     public function update(OrderProductRequest $request, $id = null)
     {
         $data = $request->validated();
-        
+
         // 배송중 상태로 변경되는 경우 SMS 발송 처리
         $isShippingStart = isset($data['status']) && $data['status'] === OrderStatus::DELIVERY->value;
-        
+
         if ($id > 0) {
-            $orderProduct = OrderProduct::where('status', OrderStatus::DELIVERY_PREPARING)->findOrFail($id);
-            $orderProduct->update($data);
-            
-            // 배송 시작 SMS 발송
-            if ($isShippingStart) {
-                $this->sendShippingNotification($orderProduct);
-            }
+            $this->registerInvoice($id, $data);
         }
 
         if (!empty($data['ids']) && count($data['ids']) > 0) {
@@ -69,7 +66,93 @@ class OrderProductController extends ApiController
 
         return $this->respondSuccessfully();
     }
-    
+
+    /**
+     * 출고처리(운송장 등록): 배송준비중 건만 처리, 배송중 전환 시 SMS 발송
+     */
+    private function registerInvoice($id, array $data): OrderProduct
+    {
+        $orderProduct = OrderProduct::where('status', OrderStatus::DELIVERY_PREPARING)->findOrFail($id);
+        $orderProduct->update($data);
+
+        // 배송 시작 SMS 발송
+        if (($data['status'] ?? null) === OrderStatus::DELIVERY->value) {
+            $this->sendShippingNotification($orderProduct);
+        }
+
+        return $orderProduct;
+    }
+
+    /**
+     * 운송장 일괄등록 (A=출고ID, B=택배사, C=운송장번호 / 1행 헤더)
+     */
+    public function importInvoices(Request $request)
+    {
+        $request->validate([
+            'file' => ['required', 'file', 'mimes:xlsx,xls,csv,txt'],
+        ]);
+
+        $sheets = Excel::toArray(new OrderProductInvoicesImport(), $request->file('file'));
+        $rows = $sheets[0] ?? [];
+
+        $success = 0;
+        $failed = [];
+
+        foreach ($rows as $index => $row) {
+            $rowNumber = $index + 2; //1행은 헤더
+
+            $id = trim((string)($row[0] ?? ''));
+            $companyInput = trim((string)($row[1] ?? ''));
+            //엑셀 숫자 셀은 float 으로 읽히므로 지수표기 없이 문자열로 환원
+            $trackingNumber = is_numeric($row[2] ?? null)
+                ? number_format((float)$row[2], 0, '', '')
+                : trim((string)($row[2] ?? ''));
+
+            if ($id === '' && $companyInput === '' && $trackingNumber === '') continue; //빈 행 무시
+
+            if (!is_numeric($id)) {
+                $failed[] = ['row' => $rowNumber, 'message' => '출고ID를 확인해주세요.'];
+                continue;
+            }
+
+            $deliveryCompany = DeliveryCompany::tryFrom(strtolower($companyInput))
+                ?? collect(DeliveryCompany::cases())->first(fn($case) => $case->label() === $companyInput);
+            if (!$deliveryCompany) {
+                $failed[] = ['row' => $rowNumber, 'message' => '택배사를 확인해주세요. (' . implode(', ', DeliveryCompany::values()) . ' 또는 택배사명)'];
+                continue;
+            }
+
+            if ($trackingNumber === '') {
+                $failed[] = ['row' => $rowNumber, 'message' => '운송장번호를 확인해주세요.'];
+                continue;
+            }
+
+            try {
+                $this->registerInvoice((int)$id, [
+                    'status' => OrderStatus::DELIVERY->value,
+                    'delivery_company' => $deliveryCompany->value,
+                    'delivery_tracking_number' => $trackingNumber,
+                    'delivery_started_at' => now(),
+                ]);
+                $success++;
+            } catch (ModelNotFoundException $e) {
+                $failed[] = ['row' => $rowNumber, 'message' => '배송준비중 상태의 출고건을 찾을 수 없습니다.'];
+            } catch (\Throwable $e) {
+                $failed[] = ['row' => $rowNumber, 'message' => $e->getMessage()];
+            }
+        }
+
+        return $this->respondSuccessfully(['success' => $success, 'failed' => $failed]);
+    }
+
+    /**
+     * 운송장 일괄등록 양식 다운로드
+     */
+    public function importTemplate()
+    {
+        return Excel::download(new OrderProductInvoiceTemplateExport(), 'invoice_import_template.xlsx');
+    }
+
     /**
      * 배송 시작 알림 문자 발송
      */

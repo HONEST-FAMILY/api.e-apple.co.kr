@@ -25,10 +25,11 @@ class SweetnessResource extends JsonResource
         ] : [];
         $return = [
             ...$additionalFields,
-            ...$this->only(['id', 'fruit_name', 'sweetness', 'standard_sweetness']),
+            ...$this->only(['id', 'fruit_name', 'sweetness', 'standard_sweetness', 'description', 'curator']),
             //'standard_datetime' => Carbon::parse($this->standard_datetime)->translatedFormat('d일(D) H시'),
-            'img' => $this->getMedia(Sweetness::IMAGES) ? MediaResource::make($this->getMedia(Sweetness::IMAGES)[0] ?? null) : null,
-            'imgs' => $this->getMedia(Sweetness::IMAGES) ? MediaResource::collection($this->getMedia(Sweetness::IMAGES) ?? null) : null,
+            'img' => ($img = $this->getFirstMedia(Sweetness::IMAGES)) ? MediaResource::make($img) : null,
+            'imgs' => $this->getMedia(Sweetness::IMAGES)->isNotEmpty() ? MediaResource::collection($this->getMedia(Sweetness::IMAGES)) : null,
+            'photos' => MediaResource::collection($this->getMedia(Sweetness::PHOTOS)),
         ];
 
         //*

@@ -26,7 +26,10 @@ class SweetnessRequest extends FormRequest
             'sweetness' => ['required', 'numeric', 'min:0'],
             'standard_sweetness' => ['required', 'numeric', 'min:0'],
             'is_display' => ['required', 'boolean'],
+            'description' => ['nullable', 'string'],
+            'curator' => ['nullable', 'string'],
             'imgs' => ['nullable', 'array'],
+            'photos' => ['nullable', 'array'],
         ];
     }
 

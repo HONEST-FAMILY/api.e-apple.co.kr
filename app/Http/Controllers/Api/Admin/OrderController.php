@@ -13,6 +13,8 @@ use App\Models\Product;
 use App\Models\ProductOption;
 use App\Models\SMS;
 use App\Models\User;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
+use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -112,7 +114,7 @@ class OrderController extends ApiController
             $showTest = !empty($decoded->show_test);
         }
 
-        $items = Order::with(['user', 'orderProducts.productOption'])
+        $items = Order::with(['user', 'orderProducts.product', 'orderProducts.productOption'])
             //->where('status', '!=', OrderStatus::ORDER_PENDING->value)
             ->whereNotIn('status', [
                 OrderStatus::ORDER_PENDING->value,
@@ -147,30 +149,103 @@ class OrderController extends ApiController
         $request->validate([
             'cancel_reason' => 'required|string|max:500'
         ]);
-        
+
         //관리자 주문취소: 모든 주문상품상태가 [결제완료, 배송준비중, 배송중] 일 때 가능
         $order = Order::with('orderProducts')->adminCanOrderCancel()->findOrFail($id);
+        $order = $this->cancelOrder($order, $request->cancel_reason);
+        return $this->respondSuccessfully(OrderResource::make($order));
+    }
+
+    /**
+     * 주문취소 처리 (환불 + 상태변경 + SMS)
+     */
+    private function cancelOrder(Order $order, $cancelReason): Order
+    {
         if (!$order->adminCanOrderCancel()) {
             $m = '모든 상품이 ' . implode(', ', OrderStatus::getAdminCanOrderCancelValues()) . '에만 주문 취소할 수 있습니다.';
             abort(response()->json(['message' => $m, 'errors' => ['order' => $m]], 403));
         }
 
-        $order = DB::transaction(function () use ($order, $request) {
+        return DB::transaction(function () use ($order, $cancelReason) {
             if (config('iamport.payment_integration')) {
                 $accessToken = Iamport::getAccessToken();
                 $result = Iamport::cancel($accessToken, $order->imp_uid);
                 if (!$result['response']) abort(403, $result['message']);
             }
-            
+
             // 취소사유와 함께 주문 취소
-            $order->cancel($request->cancel_reason);
-            
+            $order->cancel($cancelReason);
+
             // SMS 발송
-            $this->sendCancellationNotification($order, $request->cancel_reason);
-            
+            $this->sendCancellationNotification($order, $cancelReason);
+
             return $order;
         });
-        return $this->respondSuccessfully(OrderResource::make($order));
+    }
+
+    /**
+     * 일괄 주문취소: 단건 취소와 동일한 경로로 처리하고 실패 건은 건너뜀
+     */
+    public function bulkCancel(Request $request)
+    {
+        $request->validate([
+            'ids' => 'required|array|min:1',
+            'ids.*' => 'required|integer',
+            'reason' => 'required|string|max:500',
+        ]);
+
+        $canceled = 0;
+        $failed = [];
+
+        foreach ($request->input('ids') as $id) {
+            try {
+                $order = Order::with('orderProducts')->adminCanOrderCancel()->findOrFail($id);
+                $this->cancelOrder($order, $request->input('reason'));
+                $canceled++;
+            } catch (ModelNotFoundException $e) {
+                $failed[] = ['id' => $id, 'message' => '취소 가능한 상태의 주문이 아닙니다.'];
+            } catch (HttpResponseException $e) {
+                $payload = json_decode($e->getResponse()->getContent());
+                $failed[] = ['id' => $id, 'message' => $payload->message ?? '주문을 취소할 수 없습니다.'];
+            } catch (\Throwable $e) {
+                $failed[] = ['id' => $id, 'message' => $e->getMessage()];
+            }
+        }
+
+        return $this->respondSuccessfully(['canceled' => $canceled, 'failed' => $failed]);
+    }
+
+    /**
+     * 발주확인: 결제완료 주문(및 주문상품)을 배송준비 상태로 일괄 전환, 이미 배송준비 이후 단계면 건너뜀
+     */
+    public function bulkConfirm(Request $request)
+    {
+        $request->validate([
+            'ids' => 'required|array|min:1',
+            'ids.*' => 'required|integer|exists:orders,id'
+        ]);
+
+        $orders = Order::with('orderProducts')->whereIn('id', $request->input('ids'))->get();
+
+        $updated = 0;
+        $skipped = 0;
+
+        DB::transaction(function () use ($orders, &$updated, &$skipped) {
+            foreach ($orders as $order) {
+                if ($order->status !== OrderStatus::PAYMENT_COMPLETE) {
+                    $skipped++;
+                    continue;
+                }
+
+                $order->orderProducts()
+                    ->where('status', OrderStatus::PAYMENT_COMPLETE)
+                    ->update(['status' => OrderStatus::DELIVERY_PREPARING]);
+                $order->update(['status' => OrderStatus::DELIVERY_PREPARING]);
+                $updated++;
+            }
+        });
+
+        return $this->respondSuccessfully(['updated' => $updated, 'skipped' => $skipped]);
     }
 
     /**

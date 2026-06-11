@@ -47,6 +47,8 @@ Route::group(['prefix' => 'admin'], function () {
         
         // 대시보드 통계
         Route::get('dashboard/statistics', [\App\Http\Controllers\Api\Admin\DashboardController::class, 'statistics']);
+        Route::get('dashboard/summary', [\App\Http\Controllers\Api\Admin\DashboardController::class, 'summary']);
+        Route::get('dashboard/badges', [\App\Http\Controllers\Api\Admin\DashboardController::class, 'badges']);
 
         Route::group(['prefix' => 'users', 'controller' => UserController::class],
             function () {
@@ -60,6 +62,7 @@ Route::group(['prefix' => 'admin'], function () {
         Route::group(['prefix' => 'products', 'controller' => ProductController::class],
             function () {
                 Route::get('init', 'init');
+                Route::get('sales', 'sales');
                 Route::get('', 'index');
                 Route::post('', 'store');
                 Route::get('{product}', 'show');
@@ -103,6 +106,8 @@ Route::group(['prefix' => 'admin'], function () {
         Route::group(['prefix' => 'orders', 'controller' => OrderController::class],
             function () {
                 Route::get('', 'index');
+                Route::put('bulk-confirm', 'bulkConfirm');
+                Route::put('bulk-cancel', 'bulkCancel');
                 Route::get('{order}', 'show');
                 Route::put('{order}', 'update');
                 Route::put('{order}/cancel', 'cancel');
@@ -115,6 +120,8 @@ Route::group(['prefix' => 'admin'], function () {
                 Route::get('init', 'init');
                 Route::get('', 'index');
                 Route::get('export', 'export');
+                Route::get('import-template', 'importTemplate');
+                Route::post('import-invoices', 'importInvoices');
                 Route::put('{id?}', 'update');
                 Route::put('{id}/cancel', 'cancel');
                 Route::put('{id}/delivery-info', 'updateDeliveryInfo');

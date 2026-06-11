@@ -26,11 +26,20 @@ class Order extends Model
     public function scopeSearch(Builder $query, $filters): Builder
     {
         $filters = json_decode($filters);
+        if (!empty($filters->status)) {
+            if ($filters->status === 'cancel') {
+                $query->whereIn('status', [OrderStatus::CANCELLATION_REQUESTED, OrderStatus::CANCELLATION_COMPLETE]);
+            } else {
+                $query->where('status', $filters->status);
+            }
+        }
         if (!empty($filters->keyword)) {
-            return $query->where('merchant_uid', 'like', '%' . $filters->keyword . '%')
-                ->orWhere('buyer_name', 'like', '%' . $filters->keyword . '%')
-                ->orWhere('buyer_contact', 'like', '%' . $filters->keyword . '%')
-                ->orWhere('buyer_email', 'like', '%' . $filters->keyword . '%');
+            $query->where(function (Builder $query) use ($filters) {
+                $query->where('merchant_uid', 'like', '%' . $filters->keyword . '%')
+                    ->orWhere('buyer_name', 'like', '%' . $filters->keyword . '%')
+                    ->orWhere('buyer_contact', 'like', '%' . $filters->keyword . '%')
+                    ->orWhere('buyer_email', 'like', '%' . $filters->keyword . '%');
+            });
         }
         return $query;
     }

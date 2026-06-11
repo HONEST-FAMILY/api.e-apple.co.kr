@@ -27,6 +27,11 @@ class SweetnessController extends ApiController
                 $sweetness->addMedia($file)->toMediaCollection(Sweetness::IMAGES);
             }
         }
+        if ($request->file(Sweetness::PHOTOS)) {
+            foreach ($request->file(Sweetness::PHOTOS) as $file) {
+                $sweetness->addMedia($file)->toMediaCollection(Sweetness::PHOTOS);
+            }
+        }
         return $this->respondSuccessfully(new SweetnessResource($sweetness));
     }
 
@@ -43,6 +48,11 @@ class SweetnessController extends ApiController
                 $sweetness->addMedia($file)->toMediaCollection(Sweetness::IMAGES);
             }
         }
+        if ($request->file(Sweetness::PHOTOS)) {
+            foreach ($request->file(Sweetness::PHOTOS) as $file) {
+                $sweetness->addMedia($file)->toMediaCollection(Sweetness::PHOTOS);
+            }
+        }
         return $this->respondSuccessfully(new SweetnessResource($sweetness));
     }
 
@@ -50,6 +60,7 @@ class SweetnessController extends ApiController
     {
         $sweetness->delete();
         $sweetness->clearMediaCollection(Sweetness::IMAGES);
+        $sweetness->clearMediaCollection(Sweetness::PHOTOS);
         return $this->respondSuccessfully();
     }
 

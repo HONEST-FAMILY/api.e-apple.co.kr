@@ -16,6 +16,8 @@ class Sweetness extends Model implements HasMedia
 
     const IMAGES = 'imgs';
 
+    const PHOTOS = 'photos';
+
     protected $casts = [
         'is_display' => 'boolean',
     ];
